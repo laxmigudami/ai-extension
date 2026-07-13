@@ -549,6 +549,11 @@ class ChatUI {
                 <i class="fas fa-mouse-pointer"></i>
                 <span>Stop</span>
             `;
+            // Show helpful message about how to use inspect mode
+            if (!this.inspectorMessageShown) {
+                this.addMessage('🔍 Inspect mode active. Hold Ctrl/Alt + Click to select elements. Normal clicks work as usual.', 'system');
+                this.inspectorMessageShown = true;
+            }
         } else {
             this.inspectorButton.classList.remove('active');
             if (!this.selectedDomContent) {
@@ -558,6 +563,8 @@ class ChatUI {
                 <i class="fas fa-mouse-pointer"></i>
                 <span>Inspect</span>
             `;
+            // Reset the message flag when inspect mode is disabled
+            this.inspectorMessageShown = false;
         }
     }
 

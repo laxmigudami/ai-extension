@@ -105,7 +105,9 @@ if (!window.elementInspector) {
             document.addEventListener('mouseover', this.handleMouseOver);
             document.addEventListener('mouseout', this.handleMouseOut);
             document.addEventListener('click', this.handleClick, true);
-            document.body.style.cursor = 'crosshair';
+            document.addEventListener('keydown', this.handleKeyDown.bind(this));
+            document.addEventListener('keyup', this.handleKeyUp.bind(this));
+            // Don't set crosshair by default - only when modifier key is pressed
             
             // Notify background script that inspector is active
             chrome.runtime.sendMessage({ type: 'SET_INSPECTOR_STATE', isActive: true });
@@ -116,6 +118,8 @@ if (!window.elementInspector) {
             document.removeEventListener('mouseover', this.handleMouseOver);
             document.removeEventListener('mouseout', this.handleMouseOut);
             document.removeEventListener('click', this.handleClick, true);
+            document.removeEventListener('keydown', this.handleKeyDown);
+            document.removeEventListener('keyup', this.handleKeyUp);
             document.body.style.cursor = '';
 
             if (this.highlightedElement) {
@@ -129,6 +133,11 @@ if (!window.elementInspector) {
 
         handleMouseOver(event) {
             if (!this.isActive) return;
+            
+            // Only highlight when holding modifier key
+            if (!event.ctrlKey && !event.altKey && !event.metaKey) {
+                return;
+            }
             
             event.preventDefault();
             event.stopPropagation();
@@ -156,6 +165,12 @@ if (!window.elementInspector) {
         handleClick(event) {
             if (!this.isActive) return;
             
+            // Only capture element when holding Ctrl or Alt key
+            // This allows normal clicks (search icons, buttons, etc.) to work
+            if (!event.ctrlKey && !event.altKey && !event.metaKey) {
+                return; // Allow normal click behavior
+            }
+            
             event.preventDefault();
             event.stopPropagation();
             
@@ -165,7 +180,7 @@ if (!window.elementInspector) {
             if (this.selectedElements.has(element)) {
                 // If already selected, unselect it
                 this.selectedElements.delete(element);
-                element.classList.remove('-selected');
+                element.classList.remove('genai-selected');
             } else {
                 // Otherwise add it
                 this.selectedElements.add(element);
@@ -189,6 +204,24 @@ if (!window.elementInspector) {
                 content: domContent,
                 elementInfo: elementInfo
             });
+        }
+
+        handleKeyDown(event) {
+            if (!this.isActive) return;
+            
+            // Show crosshair cursor when modifier key is pressed
+            if (event.ctrlKey || event.altKey || event.metaKey) {
+                document.body.style.cursor = 'crosshair';
+            }
+        }
+
+        handleKeyUp(event) {
+            if (!this.isActive) return;
+            
+            // Remove crosshair cursor when modifier key is released
+            if (!event.ctrlKey && !event.altKey && !event.metaKey) {
+                document.body.style.cursor = '';
+            }
         }
 
         extractElementInfo(element) {
