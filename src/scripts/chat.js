@@ -10,6 +10,7 @@ class ChatUI {
         this.inputField            = document.getElementById('chatInput');
         this.sendButton            = document.getElementById('sendMessage');
         this.inspectorButton       = document.getElementById('inspectorButton');
+        this.recordFlowButton      = document.getElementById('recordFlowButton');
         this.resetButton           = document.getElementById('resetChat');
         this.runTestButton         = document.getElementById('runTestButton');
         this.pushAndRunButton      = document.getElementById('pushAndRunButton');
@@ -23,6 +24,8 @@ class ChatUI {
         // Additional states
         this.selectedDomContent    = null;
         this.isInspecting          = false;
+        this.isRecording           = false;
+        this.recordingSteps        = [];
         this.markdownReady         = false;
         this.codeGeneratorType     = 'SELENIUM_JAVA_PAGE_ONLY'; // default 
         this.tokenWarningThreshold = 10000;
@@ -131,6 +134,19 @@ class ChatUI {
                 this.updateInspectorButtonState();
             }
         });
+
+        // Record Flow button
+        if (this.recordFlowButton) {
+            this.recordFlowButton.addEventListener('click', async () => {
+                if (!this.isRecording) {
+                    // Start recording
+                    await this.startRecording();
+                } else {
+                    // Stop recording
+                    await this.stopRecording();
+                }
+            });
+        }
 
         // Run Test button
         if (this.runTestButton) {
@@ -543,6 +559,140 @@ class ChatUI {
                 <span>Inspect</span>
             `;
         }
+    }
+
+    async startRecording() {
+        try {
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (!tab) return;
+            
+            if (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) {
+                this.addMessage('Cannot record on browser internal pages', 'system');
+                return;
+            }
+
+            // Inject content script if needed
+            try {
+                await chrome.scripting.executeScript({
+                    target: { tabId: tab.id },
+                    files: ['src/content/content.js']
+                });
+            } catch (error) {
+                if (!error.message.includes('already been injected')) {
+                    throw error;
+                }
+            }
+
+            // Start recording session
+            const response = await chrome.runtime.sendMessage({ type: 'START_RECORDING' });
+            if (response.success) {
+                this.isRecording = true;
+                this.recordingSteps = [];
+                this.updateRecordButtonState();
+                this.addMessage('🔴 Recording started. Navigate and interact with elements. Steps will be captured across pages.', 'system');
+                
+                // Auto-start inspector
+                const port = chrome.tabs.connect(tab.id);
+                port.postMessage({ type: 'TOGGLE_INSPECTOR', reset: false });
+            }
+        } catch (error) {
+            console.error('Failed to start recording:', error);
+            this.addMessage('Failed to start recording. Please try again.', 'system');
+        }
+    }
+
+    async stopRecording() {
+        try {
+            // Stop recording session
+            const response = await chrome.runtime.sendMessage({ type: 'STOP_RECORDING' });
+            if (response.success) {
+                this.isRecording = false;
+                this.recordingSteps = response.steps || [];
+                this.updateRecordButtonState();
+                
+                // Format recording for display
+                const stepsSummary = this.formatRecordingSteps(this.recordingSteps);
+                this.addMessage(`⏹️ Recording stopped. Captured ${this.recordingSteps.length} steps:\n\n${stepsSummary}`, 'system');
+                
+                // Automatically populate the input with recording context
+                this.selectedDomContent = this.formatRecordingForGeneration(this.recordingSteps);
+            }
+        } catch (error) {
+            console.error('Failed to stop recording:', error);
+            this.addMessage('Failed to stop recording. Please try again.', 'system');
+        }
+    }
+
+    updateRecordButtonState() {
+        if (!this.recordFlowButton) return;
+        
+        if (this.isRecording) {
+            this.recordFlowButton.classList.add('active', 'recording');
+            this.recordFlowButton.innerHTML = `
+                <i class="fas fa-stop"></i>
+                <span>Stop Recording</span>
+            `;
+        } else {
+            this.recordFlowButton.classList.remove('active', 'recording');
+            this.recordFlowButton.innerHTML = `
+                <i class="fas fa-circle"></i>
+                <span>Record Flow</span>
+            `;
+        }
+    }
+
+    formatRecordingSteps(steps) {
+        let summary = '';
+        steps.forEach((step, index) => {
+            if (step.type === 'navigation') {
+                summary += `${index + 1}. Navigate to: ${step.url}\n`;
+            } else if (step.type === 'interaction') {
+                const info = step.elementInfo;
+                if (info) {
+                    summary += `${index + 1}. Interact with ${info.tagName}`;
+                    if (info.id) summary += ` #${info.id}`;
+                    if (info.text) summary += ` "${info.text.substring(0, 30)}..."`;
+                    summary += ` on ${new URL(step.url).hostname}\n`;
+                } else {
+                    summary += `${index + 1}. Interaction on ${step.url}\n`;
+                }
+            }
+        });
+        return summary || 'No steps recorded';
+    }
+
+    formatRecordingForGeneration(steps) {
+        // Format the recording data for AI code generation
+        let formatted = 'Recorded End-to-End Flow:\n\n';
+        
+        steps.forEach((step, index) => {
+            if (step.type === 'navigation') {
+                formatted += `Step ${index + 1}: Navigate to ${step.url}\n`;
+                if (step.title) formatted += `  Page Title: ${step.title}\n`;
+            } else if (step.type === 'interaction') {
+                formatted += `Step ${index + 1}: Interaction\n`;
+                formatted += `  Page: ${step.url}\n`;
+                
+                if (step.elementInfo) {
+                    const info = step.elementInfo;
+                    formatted += `  Element: ${info.tagName}`;
+                    if (info.id) formatted += ` id="${info.id}"`;
+                    if (info.className) formatted += ` class="${info.className}"`;
+                    formatted += '\n';
+                    
+                    if (info.text) formatted += `  Text: ${info.text}\n`;
+                    if (info.xpath) formatted += `  XPath: ${info.xpath}\n`;
+                    if (info.cssSelector) formatted += `  CSS: ${info.cssSelector}\n`;
+                }
+                
+                if (step.content) {
+                    formatted += `  HTML:\n${step.content.substring(0, 500)}...\n`;
+                }
+            }
+            formatted += '\n';
+        });
+        
+        return formatted;
     }
 
     getPromptKeys(language, engine) {
